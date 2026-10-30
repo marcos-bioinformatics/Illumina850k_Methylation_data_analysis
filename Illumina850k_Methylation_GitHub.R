@@ -1,24 +1,44 @@
 ## Author: Marcos Elizalde Horcada - marcos.elizaldeh@gmail.com
 ## Date: January 2021
+## Revised: October 2026
 
-## Based in A cross-package Bioconductor workflow for analysing methylation 
+## Based in A cross-package Bioconductor workflow for analysing methylation
 ## array (Jovana Maksimovic, Belinda Phipson and Alicia Oshlack, 2020)
 
+## Revision notes (October 2026)
+## Bug fixes only: normalization (Noob + BMIQ), probe filters, limma
+## contrasts, DMRcate parameters, cell counts (estimateCellCounts2 with IDOL)
+## and the Houseman correction (champ.refbase) are unchanged.
+##  - DMPs_*total.csv: the beta differences are now joined to the topTable()
+##    results by probe ID. cbind() paired them by position, but topTable()
+##    sorts probes by significance, so each row got the delta-beta of
+##    another probe.
+##  - DMPs_cc_cp.csv, DMPs_hc_hp.csv and DMPs_sc_sp.csv saved the amygdala
+##    results (DMPs_a); each file now holds its own contrast.
+##  - Undefined objects: betanorm6 -> betasNoobBMIQ, RGsetTarget ->
+##    RGsetTargets.
+##  - Removed the rm() blocks (they deleted betasc/betasp before Houseman)
+##    and the bloodbetas object (same data as betablood.csv).
+##  - The filtered betas are written to betasNoobBMIQ_filtered.csv and saved
+##    in checkpoint_filtered.RData, instead of reading files the script never
+##    created. The blood cell-type boxplot is built from countsEPIC$counts
+##    instead of Results/Blood/cells_*.csv.
+##  - MDS legends now match the colouring variable.
+##  - Removed memory.limit() (defunct since R 4.2) and unused packages
+##    (knitr, minfiData, Gviz, missMethyl, stringr).
+##  - DMPs, delta-betas and DMRs are computed in loops over the tissues;
+##    output file names are unchanged.
+
 #--------------------------------------------------------------------#
-#------------- Setting up the workspace and data loading ------------# 
+#------------- Setting up the workspace and data loading ------------#
 #--------------------------------------------------------------------#
 
-library(knitr)
 library(limma)
 library(minfi)
 library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
 library(IlluminaHumanMethylationEPICmanifest)
 library(RColorBrewer)
-library(missMethyl)
-library(minfiData)
-library(Gviz)
 library(DMRcate)
-library(stringr)
 library(wateRmelon)
 library(ChAMP)
 library(readxl)
@@ -30,7 +50,7 @@ ann850k <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
 # Set up data directory
 dataDirectory <- "IDAT"
 # Read in the sample sheet for the experiment
-targets <- read.metharray.sheet(dataDirectory, 
+targets <- read.metharray.sheet(dataDirectory,
                                 pattern="Samplesheet epilepsia.csv")
 
 # Read in the raw data from the IDAT files
@@ -46,24 +66,24 @@ detP <- detectionP(rgSet)
 # Examine detection p-values for all samples
 pal <- brewer.pal(12,"Paired")
 #par(mfrow=c(1,2)) for double plotting, LEGENDS ARE PROVISIONAL
-barplot(colMeans(detP), col=pal[factor(targets$Sample_Group)], las=2, 
+barplot(colMeans(detP), col=pal[factor(targets$Sample_Group)], las=2,
         cex.names=0.8, ylab="Mean detection p-values")
 abline(h=0.05,col="red")
 legend("topleft", legend=levels(factor(targets$Sample_Group)), fill=pal,
        bg="white", cex = 0.5)
 
-barplot(colMeans(detP), col=pal[factor(targets$Sample_Group)], las=2, 
+barplot(colMeans(detP), col=pal[factor(targets$Sample_Group)], las=2,
         cex.names=0.8, ylim=c(0,0.0015), ylab="Mean detection p-values")
 abline(h=0.05,col="red")
-legend("topleft", legend=levels(factor(targets$Sample_Group)), fill=pal, 
+legend("topleft", legend=levels(factor(targets$Sample_Group)), fill=pal,
        bg="white", cex = 0.5)
 
-# QC Report from the minfy package 
-qcReport(rgSet, sampNames=targets$ID, sampGroups=targets$Sample_Group, 
+# QC Report from the minfy package
+qcReport(rgSet, sampNames=targets$ID, sampGroups=targets$Sample_Group,
          pdf="qcReport.pdf")
 
 #--------------------------------------------------------------------#
-#------------------------ Noob Normalization ------------------------# 
+#------------------------ Noob Normalization ------------------------#
 #--------------------------------------------------------------------#
 
 # Remove poor quality samples
@@ -91,39 +111,39 @@ mSetRaw <- preprocessRaw(rgSet)
 # Normalized data vs. Raw data
 par(mfrow=c(1,2))
 densityPlot(rgSet, sampGroups=targets$Sample_Group,main="Raw", legend=FALSE)
-legend("top", legend = levels(factor(targets$Sample_Group)), 
+legend("top", legend = levels(factor(targets$Sample_Group)),
        text.col=brewer.pal(12,"Paired"))
 densityPlot(getBeta(mSetSq), sampGroups=targets$Sample_Group,
             main="Normalized", legend=FALSE)
-legend("top", legend = levels(factor(targets$Sample_Group)), 
+legend("top", legend = levels(factor(targets$Sample_Group)),
        text.col=brewer.pal(12,"Paired"))
 
-# MDS plot 
-plotMDS(getM(mSetSq), top=1000, gene.selection="common", 
+# MDS plot
+plotMDS(getM(mSetSq), top=1000, gene.selection="common",
         col=pal[factor(targets$Sample_Group)], xlim=(c(-4,6)),
         ylim=c(-2,2))
 #legend("top", legend=levels(factor(targets$Sample_Group)), text.col=pal,
 #bg="white", cex=0.7)
 
-plotMDS(getM(mSetSq), top=1000, gene.selection="common", 
+plotMDS(getM(mSetSq), top=1000, gene.selection="common",
         col=pal[factor(targets$cellType)], dim=c(1,3))
-#legend("top", legend=levels(factor(targets$Sample_Group)), text.col=pal, 
+#legend("top", legend=levels(factor(targets$cellType)), text.col=pal,
 #cex=0.7, bg="white")
 
-plotMDS(getM(mSetSq), top=1000, gene.selection="common", 
+plotMDS(getM(mSetSq), top=1000, gene.selection="common",
         col=pal[factor(targets$cellType)], dim=c(2,3),
         ylim=c(-1,1), xlim=c(-1,1))
-#legend("topleft", legend=levels(factor(targets$Sample_Group)), text.col=pal,
+#legend("topleft", legend=levels(factor(targets$cellType)), text.col=pal,
 #cex=0.7, bg="white")
 
-plotMDS(getM(mSetSq), top=1000, gene.selection="common", 
+plotMDS(getM(mSetSq), top=1000, gene.selection="common",
         col=pal[factor(targets$cellType)], dim=c(3,4),
         xlim=c(-1,1))
-#legend("topright", legend=levels(factor(targets$Sample_Group)), text.col=pal,
+#legend("topright", legend=levels(factor(targets$cellType)), text.col=pal,
 #cex=0.7, bg="white")
 
 #--------------------------------------------------------------------#
-#------------------------ BMIQ Normalization ------------------------# 
+#------------------------ BMIQ Normalization ------------------------#
 #--------------------------------------------------------------------#
 
 # Extract beta values
@@ -142,7 +162,7 @@ betasNoobBMIQ <- champ.norm(beta=bVals,
 write.table(betasNoobBMIQ, "betasNoobBMIQ.txt")
 
 #--------------------------------------------------------------------#
-#----------------------------- Filtering ----------------------------# 
+#----------------------------- Filtering ----------------------------#
 #--------------------------------------------------------------------#
 
 # Filtering probes from betasNoobBMIQ:
@@ -171,7 +191,7 @@ xReactiveProbes1 <- read_excel("48639-non-specific-probes-Illumina450k.xlsx",
 
 keep <- !(rownames(betasNoobBMIQ) %in% xReactiveProbes1$TargetID)
 table(keep)
-betasNoobBMIQ <- betasNoobBMIQ[keep,] 
+betasNoobBMIQ <- betasNoobBMIQ[keep,]
 dim(betasNoobBMIQ) #812946
 
 xReactiveProbes2 <- read_excel("48639-non-specific-probes-Illumina450k.xlsx",
@@ -187,7 +207,7 @@ xReactiveProbes3 <- read.csv("13059_2016_1066_MOESM1_ESM.csv",
                              stringsAsFactors = FALSE)
 keep <- !(rownames(betasNoobBMIQ) %in% xReactiveProbes3$TargetID)
 table(keep)
-betasNoobBMIQ <- betasNoobBMIQ[keep,] 
+betasNoobBMIQ <- betasNoobBMIQ[keep,]
 dim(betasNoobBMIQ) #796229
 
 # Exclude SNPs.147 for CpG_maf >= 0.01
@@ -198,6 +218,10 @@ keep <- !(rownames(betasNoobBMIQ) %in% SNPs.remove$TargetID)
 table(keep)
 betasNoobBMIQ <- betasNoobBMIQ[keep,]
 dim(betasNoobBMIQ) #772002
+
+# Back to a matrix (same values) for limma, plotCpg() and DMRcate
+betasNoobBMIQ <- as.matrix(betasNoobBMIQ)
+write.csv(betasNoobBMIQ, "betasNoobBMIQ_filtered.csv")
 
 # Convert beta values to M values
 mVals <- log2(betasNoobBMIQ/(1-betasNoobBMIQ))
@@ -211,28 +235,23 @@ legend("right", legend=levels(factor(targets$Sample_Group)), text.col=pal,
 
 plotMDS(mVals, top=1000, gene.selection="common",
         col=pal[factor(targets$Tissue)])
-legend("right", legend=levels(factor(targets$Sample_Source)), text.col=pal,
+legend("right", legend=levels(factor(targets$Tissue)), text.col=pal,
        cex=0.7, bg="white")
 
-# Clean workspace and save R workspace image
-rm(dataSNPs)
-rm(detP)
-rm(mSetRaw)
-rm(mSetSq)
-rm(probeInfoALL.lv)
-rm(SNPs.remove)
-rm(xReactiveProbes1)
-rm(xReactiveProbes2)
-rm(xReactiveProbes3)
-rm(keep)
-
-# WORKSPACE IMAGE CREATED HERE (can run HOUSEMAN part from this workspace)
+# Checkpoint: the rest of the script (DMPs, DMRs, cell counts and Houseman)
+# can be run from here in a new R session
+save(targets, rgSet, betasNoobBMIQ, mVals, file="checkpoint_filtered.RData")
 
 #--------------------------------------------------------------------#
-#------------ Probe-wise differential methylation analysis ----------# 
+#------------ Probe-wise differential methylation analysis ----------#
 #--------------------------------------------------------------------#
 
-betasNoobBMIQ <- read.csv("betasNoobBMIQ_filtered.csv")
+# To resume in a new R session: load the libraries and ann850k (first
+# section), then run from here
+if (!exists("mVals")) load("checkpoint_filtered.RData")
+
+# Tissue codes used in targets$cellType: <code>p = patients, <code>c = controls
+tissues <- c(a = "amygdala", c = "cortex", h = "hippocampus", s = "blood")
 
 # Choose the factor of interest
 #cellType <- factor(targets$Sample_Group)
@@ -242,8 +261,8 @@ cellType <- factor(targets$cellType)
 # Use the above to create a design matrix
 design <- model.matrix(~0+cellType, data=targets)
 colnames(design) <- levels(cellType)
- 
-# Fit the linear model 
+
+# Fit the linear model
 fit <- lmFit(mVals, design)
 # Create a contrast matrix for specific comparisons
 contMatrix <- makeContrasts(ap-ac,
@@ -265,309 +284,135 @@ summary(decideTests(fit2))
 #NotSig  771944  696120  771969  753018
 #Up          35   51696      20    5869
 
-# get the table of results for the contrast
+# get the table of results for each contrast
 ann850kSub <- ann850k[match(rownames(mVals),ann850k$Name),
                       c(1:4,12:19,24:ncol(ann850k))]
 
-DMPs_a <- topTable(fit2, num=Inf, coef=1, genelist=ann850kSub)
-head(DMPs_a)
-write.csv(DMPs_a, "DMPs_ac_ap.csv")
+DMPs <- list()
+for (tissue in names(tissues)) {
+  contrast <- paste0(tissue, "p - ", tissue, "c") # e.g. "ap - ac"
+  DMPs[[tissue]] <- topTable(fit2, num=Inf, coef=contrast, genelist=ann850kSub)
+  print(head(DMPs[[tissue]]))
+  write.csv(DMPs[[tissue]], paste0("DMPs_", tissue, "c_", tissue, "p.csv"))
 
-DMPs_c <- topTable(fit2, num=Inf, coef=2, genelist=ann850kSub)
-head(DMPs_c)
-write.csv(DMPs_a, "DMPs_cc_cp.csv")
-
-DMPs_h <- topTable(fit2, num=Inf, coef=3, genelist=ann850kSub)
-head(DMPs_h)
-write.csv(DMPs_a, "DMPs_hc_hp.csv")
-
-DMPs_s <- topTable(fit2, num=Inf, coef=4, genelist=ann850kSub)
-head(DMPs_s)
-write.csv(DMPs_a, "DMPs_sc_sp.csv")
-
-# plot the top 4 most significantly differentially methylated CpGs/tissue
-par(mfrow=c(2,2))
-sapply(rownames(DMPs_a)[1:4], function(cpg){
-  plotCpg(betasNoobBMIQ, cpg=cpg, pheno=targets$Sample_Group, ylab = "Beta values")
-})
-
-par(mfrow=c(2,2))
-sapply(rownames(DMPs_c)[1:4], function(cpg){
-  plotCpg(betasNoobBMIQ, cpg=cpg, pheno=targets$Sample_Group, ylab = "Beta values")
-})
-
-par(mfrow=c(2,2))
-sapply(rownames(DMPs_h)[1:4], function(cpg){
-  plotCpg(betanorm6, cpg=cpg, pheno=targets$Sample_Group, ylab = "Beta values")
-})
-
-par(mfrow=c(2,2))
-sapply(rownames(DMPs_s)[1:4], function(cpg){
-  plotCpg(betanorm6, cpg=cpg, pheno=targets$Sample_Group, ylab = "Beta values")
-})
+  # plot the top 4 most significantly differentially methylated CpGs
+  par(mfrow=c(2,2))
+  plotCpg(betasNoobBMIQ, cpg=rownames(DMPs[[tissue]])[1:4],
+          pheno=targets$Sample_Group, ylab = "Beta values")
+}
 
 ## Compute the betamean and beta difference for each tissue
+betaincrease_files <- c(a = "betaincrease_AMYGDALA.csv",
+                        c = "betaincrease_CORTEX_2.csv",
+                        h = "betaincrease_HIPPOCAMPUS.csv",
+                        s = "betaincrease_BLOOD.csv")
 
-##### Cortex
-cellType <- factor(targets$cellType)
-cp <- targets[targets$cellType == "cp",] #Dataframe containing just CP samples
-cc <- targets[targets$cellType == "cc",]
+betaincrease <- list()
+DMPs_total <- list()
+for (tissue in names(tissues)) {
+  patients <- targets[targets$cellType == paste0(tissue, "p"),]
+  controls <- targets[targets$cellType == paste0(tissue, "c"),]
 
-betacc <- betasNoobBMIQ[, colnames(betasNoobBMIQ) %in% cc$ID]
-betacp <- betasNoobBMIQ[, colnames(betasNoobBMIQ) %in% cp$ID]
+  betap <- betasNoobBMIQ[, colnames(betasNoobBMIQ) %in% patients$ID, drop=FALSE]
+  betac <- betasNoobBMIQ[, colnames(betasNoobBMIQ) %in% controls$ID, drop=FALSE]
 
-betacpmean <- rowMeans(betacp) # Compute mean of every probe accross samples
-betaccmean <- rowMeans(betacc)
+  betapmean <- rowMeans(betap) # Compute mean of every probe accross samples
+  betacmean <- rowMeans(betac)
 
-# Calculate the difference between patients and controls
-difference <- (betacpmean-betaccmean)
-betaincrease <- cbind(betacpmean, betaccmean, difference)
-betaincrease <- as.data.frame(betaincrease)
+  # Calculate the difference between patients and controls
+  difference <- (betapmean - betacmean)
+  betaincrease[[tissue]] <- data.frame(betapmean, betacmean, difference)
+  # Same column names as before, e.g. betacpmean, betaccmean, difference
+  colnames(betaincrease[[tissue]])[1:2] <- paste0("beta", tissue,
+                                                  c("p", "c"), "mean")
+  write.csv(betaincrease[[tissue]], betaincrease_files[[tissue]])
 
-write.csv(betaincrease, "betaincrease_CORTEX_2.csv")
-
-DMPs_ctotal <- cbind(DMPs_c,betaincrease)
-write.csv(DMPs_ctotal, "DMPs_ctotal.csv")
-
-##### Hippocampus
-cellType <- factor(targets$cellType)
-hp <- targets[targets$cellType == "hp",] #Dataframe containing just HP samples
-hc <- targets[targets$cellType == "hc",]
-
-betahp <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% hp$ID]
-betahc <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% hc$ID]
-
-betahpmean <- rowMeans(betahp) # Compute mean of every probe accross samples
-betahcmean <- rowMeans(betahc)
-
-# Calculate the difference between patients and controls
-difference <- (betahpmean-betahcmean)
-betaincrease <- cbind(betahpmean, betahcmean, difference)
-
-write.csv(betaincrease, "betaincrease_HIPPOCAMPUS.csv")
-
-DMPs_htotal <- cbind(DMPs_h, betaincrease)
-write.csv(DMPs_htotal, "DMPs_htotal.csv")
-
-#### Amygdala
-cellType <- factor(targets$cellType)
-ap <- targets[targets$cellType == "ap",]
-ac <- targets[targets$cellType == "ac",]
-
-betaap <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% ap$ID]
-betaac <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% ac$ID]
-
-betaapmean <- rowMeans(betaap)
-betaacmean <- rowMeans(betaac)
-
-# Calculate the difference between patients and controls
-difference <- (betaapmean - betaacmean)
-betaincrease <- cbind(betaapmean, betaacmean, difference)
-
-write.csv(betaincrease, "betaincrease_AMYGDALA.csv")
-
-DMPs_atotal <- cbind(DMPs_a, betaincrease)
-write.csv(DMPs_atotal, "DMPs_atotal.csv")
-
-##### Blood
-cellType <- factor(targets$cellType)
-sp <- targets[targets$cellType == "sp",]
-sc <- targets[targets$cellType == "sc",]
-
-betasp <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% sp$ID]
-betasc <- betasNoobBMIQ[, colnames(betasNoobBMIQ)%in% sc$ID]
-
-betaspmean <- rowMeans(betasp)
-betascmean <- rowMeans(betasc)
-
-# Calculate the difference between patients and controls
-difference <- (betaspmean - betascmean)
-betaincrease <- cbind(betaspmean, betascmean, difference)
-
-write.csv(betaincrease, "betaincrease_BLOOD.csv")
-
-DMPs_stotal <- cbind(DMPs_s, betaincrease)
-write.csv(DMPs_stotal, "DMPs_stotal.csv")
+  # Join by probe ID: topTable() sorts the probes by significance, so the
+  # rows are not in the same order as in betaincrease
+  stopifnot(setequal(rownames(DMPs[[tissue]]), rownames(betaincrease[[tissue]])))
+  DMPs_total[[tissue]] <- cbind(DMPs[[tissue]],
+                                betaincrease[[tissue]][rownames(DMPs[[tissue]]),])
+  write.csv(DMPs_total[[tissue]], paste0("DMPs_", tissue, "total.csv"))
+}
 
 #--------------------------------------------------------------------#
-#------------ Differential methylation analysis of regions ----------# 
+#------------ Differential methylation analysis of regions ----------#
 #--------------------------------------------------------------------#
 
 ## Extract Differential Methylated Regions (DMRs) for each tissue
-mVals <- as.matrix(mVals)
-##### Amygdala
-myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M", 
-                             analysis.type = "differential", design = design, 
-                             contrasts = TRUE, cont.matrix = contMatrix, 
-                             coef = "ap - ac", arraytype = "EPIC")
+## Note: recent DMRcate versions (with EPIC v2 support) may require
+## arraytype = "EPICv1" instead of "EPIC" for these 850k (EPIC v1) arrays
+DMRs <- list()
+for (tissue in names(tissues)) {
+  myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M",
+                               analysis.type = "differential", design = design,
+                               contrasts = TRUE, cont.matrix = contMatrix,
+                               coef = paste0(tissue, "p - ", tissue, "c"),
+                               arraytype = "EPIC")
 
-str(myAnnotation)
+  str(myAnnotation)
 
-DMRs_a <- dmrcate(myAnnotation, lambda=1000, C=2, pcutoff = "fdr")
-results.ranges <- extractRanges(DMRs_a)
-results.ranges
+  DMRs[[tissue]] <- dmrcate(myAnnotation, lambda=1000, C=2, pcutoff = "fdr")
+  results.ranges <- extractRanges(DMRs[[tissue]])
+  print(results.ranges)
 
-write.csv(as.data.frame(results.ranges), "DMRs_a.csv")
-
-##### Cortex
-myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M", 
-                             analysis.type = "differential", design = design, 
-                             contrasts = TRUE, cont.matrix = contMatrix, 
-                             coef = "cp - cc", arraytype = "EPIC")
-
-str(myAnnotation)
-
-DMRs_c <- dmrcate(myAnnotation, lambda=1000, C=2, pcutoff = "fdr")
-results.ranges <- extractRanges(DMRs_c)
-results.ranges
-
-write.csv(as.data.frame(results.ranges), "DMRs_c.csv")
-
-##### Hypoccampus
-myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M", 
-                             analysis.type = "differential", design = design, 
-                             contrasts = TRUE, cont.matrix = contMatrix, 
-                             coef = "hp - hc", arraytype = "EPIC")
-
-str(myAnnotation)
-
-DMRs_h <- dmrcate(myAnnotation, lambda=1000, C=2, pcutoff = "fdr")
-results.ranges <- extractRanges(DMRs_h)
-results.ranges
-
-write.csv(as.data.frame(results.ranges), "DMRs_h.csv")
-
-##### Blood
-myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M", 
-                             analysis.type = "differential", design = design, 
-                             contrasts = TRUE, cont.matrix = contMatrix, 
-                             coef = "sp - sc", arraytype = "EPIC")
-
-str(myAnnotation)
-
-DMRs_s <- dmrcate(myAnnotation, lambda=1000, C=2, pcutoff = "fdr")
-results.ranges <- extractRanges(DMRs_s)
-results.ranges
-
-write.csv(as.data.frame(results.ranges), "DMRs_s.csv")
+  write.csv(as.data.frame(results.ranges), paste0("DMRs_", tissue, ".csv"))
+}
 
 ## Finally we check for blood cell type proportions
 ## FlowSorted.Blood.EPIC for estimate cell type composition on blood samples
 library("FlowSorted.Blood.EPIC")
-library(ExperimentHub)  
-hub <- ExperimentHub()  
-query(hub, "FlowSorted.Blood.EPIC")  
-FlowSorted.Blood.EPIC <- hub[["EH1136"]]  
+library(ExperimentHub)
+hub <- ExperimentHub()
+query(hub, "FlowSorted.Blood.EPIC")
+FlowSorted.Blood.EPIC <- hub[["EH1136"]]
 head(IDOLOptimizedCpGs) #OptimizedCpGs
-FlowSorted.Blood.EPIC 
+FlowSorted.Blood.EPIC
 
 # Take the blood samples
-RGsetTargets <- rgSet[, rgSet$Tissue == "blood"] 
-RGsetTarget
+RGsetTargets <- rgSet[, rgSet$Tissue == "blood"]
+RGsetTargets
 
-# Estimate cell counts
-if (memory.limit()>8000){  
-  countsEPIC<-estimateCellCounts2(RGsetTargets, compositeCellType = "Blood",   
-                                  processMethod = "preprocessNoob",  
-                                  probeSelect = "IDOL",  
-                                  cellTypes = c("CD8T", "CD4T", "NK", "Bcell",  
-                                                "Mono", "Neu"),  
-                                  referencePlatform =   
-                                    "IlluminaHumanMethylationEPIC",  
-                                  referenceset = NULL,  
-                                  IDOLOptimizedCpGs =IDOLOptimizedCpGs,   
-                                  returnAll = FALSE)  
-  
-  head(countsEPIC$counts)  
-}
+# Estimate cell counts (needs about 8 GB of RAM)
+countsEPIC<-estimateCellCounts2(RGsetTargets, compositeCellType = "Blood",
+                                processMethod = "preprocessNoob",
+                                probeSelect = "IDOL",
+                                cellTypes = c("CD8T", "CD4T", "NK", "Bcell",
+                                              "Mono", "Neu"),
+                                referencePlatform =
+                                  "IlluminaHumanMethylationEPIC",
+                                referenceset = NULL,
+                                IDOLOptimizedCpGs =IDOLOptimizedCpGs,
+                                returnAll = FALSE)
+
+head(countsEPIC$counts)
 
 # Save results as a data frame
 write.csv(as.data.frame(countsEPIC$counts), "cell_distro.csv")
 
-# Plot 
-controles <- read.csv("Results/Blood/cells_controles.csv")
-rownames(controles) <- controles$X
-controles <- controles[,-1]
-treatment <- read.csv("Results/Blood/cells_treatment.csv")
-rownames(treatment) <- treatment$X
-treatment <- treatment[,-1]
+# Plot cell type proportions in patients (sp) vs controls (sc)
+cellCounts <- as.data.frame(countsEPIC$counts)
+cellCounts$group <- factor(targets$cellType[match(rownames(cellCounts),
+                                                  targets$ID)],
+                           levels = c("sc", "sp"),
+                           labels = c("controls", "patients"))
+stopifnot(!anyNA(cellCounts$group))
+cellCounts <- melt(cellCounts, id.vars = 'group')
 
-controles$group <- rep('control', nrow(controles))
-controles <- melt(controles, id.vars = 'group')
-treatment$group <- rep('treatment', nrow(treatment))
-treatment <- melt(treatment, id.vars = 'group')
-
-allData <- rbind(controles, treatment)
-
-ggplot(allData, aes(x=variable, y=value, color = group)) +
-  geom_boxplot() +
-  labs(title = "Differences in blood cell types", x="Cell Type", y="Proportion")
-
-# Clean workspace and save Workspace image
-rm(ac)
-rm(allData)
-rm(ap)
-rm(betaac)
-rm(betaap)
-rm(betacc)
-rm(betacp)
-rm(betahc)
-rm(betahp)
-rm(betasc)
-rm(betasp)
-rm(bloodbetas)
-rm(cc)
-rm(CellTypeMeans450K)
-rm(contMatrix)
-rm(controles)
-rm(countsEPIC)
-rm(CorrectedBeta)
-rm(cp)
-rm(design)
-rm(DMPs_a)
-rm(DMPs_atotal)
-rm(DMPs_c)
-rm(DMPs_ctotal)
-rm(DMPs_h)
-rm(DMPs_htotal)
-rm(DMPs_s)
-rm(DMPs_stotal)
-rm(DMRs_a)
-rm(DMRs_c)
-rm(DMRs_h)
-rm(DMRs_s)
-rm(fit)
-rm(fit2)
-rm(FlowSorted.Blood.EPIC)
-rm(hc)
-rm(hp)
-rm(hub)
-rm(sc)
-rm(sp)
-rm(betaacmean)
-rm(betaapmean)
-rm(betaccmean)
-rm(betacpmean)
-rm(betahcmean)
-rm(betahpmean)
-rm(betascmean)
-rm(betaspmean)
-rm(betaincrease)
-rm(myAnnotation)
-rm(results.ranges)
-rm(RGsetTargets)
-rm(treatment)
-rm(difference)
-rm(cellType)
-
-# Can run Houseman correction method from saved workspace image
+print(ggplot(cellCounts, aes(x=variable, y=value, color = group)) +
+        geom_boxplot() +
+        labs(title = "Differences in blood cell types", x="Cell Type",
+             y="Proportion"))
 
 #--------------------------------------------------------------------#
-#----------------- Houseman method for blood samples ----------------# 
+#----------------- Houseman method for blood samples ----------------#
 #--------------------------------------------------------------------#
+
+# Can also be run on its own from the checkpoint (see above)
+if (!exists("betasNoobBMIQ")) load("checkpoint_filtered.RData")
 
 # Get beta values from blood samples
-blood <- targets[targets$Tissue == "blood",] 
+blood <- targets[targets$Tissue == "blood",]
 betablood <- betasNoobBMIQ[, colnames(betasNoobBMIQ) %in% blood$ID]
 write.csv(betablood, "betablood.csv")
 
@@ -580,10 +425,6 @@ write.csv(CorrectedBeta, "CorrectedBeta_BLOOD.csv")
 mValsb <- log2(CorrectedBeta / (1 - CorrectedBeta))
 mValsb <- replace(mValsb, is.na(mValsb), 0) # Replace NAs for 0s
 write.csv(mValsb, "Mvalues_BLOOD_Houseman.csv")
-
-# Get dataframe of betasc + betasp
-bloodbetas <- cbind(betasc, betasp)
-write.csv(bloodbetas, "bloodbetas.csv")
 
 # Limma
 cellType <- factor(blood$cellType)
