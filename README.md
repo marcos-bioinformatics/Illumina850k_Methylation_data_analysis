@@ -1,6 +1,6 @@
 # Illumina EPIC (850k) DNA methylation analysis
 
-R analysis script for Illumina Infinium MethylationEPIC (850k) arrays, developed for an epigenome-wide study of drug-resistant temporal lobe epilepsy at Hospital Universitario de La Princesa (Madrid). The study compares patients and controls in four tissues: hippocampus, cortex, amygdala and blood.
+R analysis script for Illumina Infinium MethylationEPIC (850k) arrays, developed in 2021 for an epigenome-wide study of drug-resistant temporal lobe epilepsy at Hospital Universitario de La Princesa (Madrid). The study compares patients and controls in four tissues: hippocampus, cortex, amygdala and blood.
 
 The workflow follows the cross-package Bioconductor workflow for methylation arrays by Maksimovic, Phipson and Oshlack, extended with BMIQ normalization and cell-composition correction for blood.
 
@@ -30,3 +30,7 @@ Patient data are not included. The script is organized in sections meant to be r
 ## Publication
 
 Sánchez-Jiménez P, Elizalde-Horcada M, et al. DNA Methylation Description of Hippocampus, Cortex, Amygdala, and Blood of Drug-Resistant Temporal Lobe Epilepsy. *Mol Neurobiol*. 2023. https://doi.org/10.1007/s12035-022-03180-z
+
+## License
+
+The code is released under the [MIT License](LICENSE). It does not include patient data.
